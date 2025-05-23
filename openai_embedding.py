@@ -56,7 +56,7 @@ def get_embedding(text, model=embedding_model):
                 time.sleep(retry_delay)
                 attempt += 1
             else:
-                print(f"Error generating embedding")
+                print(f"!!!!!!!!!!!!!!!!!!!!!!!!Error generating embedding!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 return None
 
     print("Exceeded maximum retries after rate limit errors. Skipping this text.")
