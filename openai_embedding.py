@@ -188,13 +188,12 @@ def process_dataframe_with_embeddings_v2(df: pd.DataFrame, text_column_name: str
 
     return embeddings_df
 
-
-file_path = 'imdb/preproccessed_imdb.csv' 
+file_path = 'Twitter_covid /preproccessed_finalSentimentdata2.csv' 
 try:
     df = pd.read_csv(file_path)
 
-    text_col = 'review' # Replace with your actual text column name
-    output_file = 'imdb/full_embeddings.parquet' # Desired output file name
+    text_col = 'text' # Replace with your actual text column name
+    output_file = 'Twitter_covid /full_embeddings.parquet' # Desired output file name
 
     # Process the DataFrame to get embeddings
     # Added delay_per_request parameter
