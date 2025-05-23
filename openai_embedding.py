@@ -189,7 +189,7 @@ def process_dataframe_with_embeddings_v2(df: pd.DataFrame, text_column_name: str
     return embeddings_df
 
 
-file_path = 'imdb/pre_proccessed_imdb.csv' 
+file_path = 'imdb/preproccessed_imdb.csv' 
 try:
     df = pd.read_csv(file_path)
 
