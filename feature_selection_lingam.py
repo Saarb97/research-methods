@@ -13,40 +13,104 @@ import seaborn as sns
 # Get the absolute path of the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
+# Build absolute paths to the data files and CONSTANTS -----------------------------------------------------------
+SAVE_CLEANED_DFS_ON_NAN_EMBEDDINGS = 'y'
+EMBEDDING_COL_NAME = 'embedding'
+LABEL_COL_NAME = 'sentiment'
+EXPERIMENT_FOLDER = 'Twitter_covid '
+SENTIMENT_FILE_NAME = 'preproccessed_finalSentimentdata2.csv'
+EMBEDDINGS_FILE_NAME = 'full_embeddings.parquet'
+sentiment_file_path = os.path.join(script_dir, EXPERIMENT_FOLDER, SENTIMENT_FILE_NAME)
+embeddings_file_path = os.path.join(script_dir, EXPERIMENT_FOLDER, EMBEDDINGS_FILE_NAME)
+
 # Define paths for results and data
-results_dir = os.path.join(script_dir, 'results')
+results_dir = os.path.join(script_dir, EXPERIMENT_FOLDER, 'clustering results')
 os.makedirs(results_dir, exist_ok=True)
 feature_importance_path = os.path.join(results_dir, 'feature_importance_scores.csv')
+# ------------------------------------------------------------------------------------------------------------------
 
-# Build absolute paths to the data files
-sentiment_file_path = os.path.join(script_dir, 'imdb', 'test_set_predictions.csv')
-current_file_path = os.path.join(script_dir, 'imdb', 'test_embeddings_parallel_v3.parquet')
-
-print(f"Looking for embeddings file at: {current_file_path}")
+print(f"Looking for embeddings file at: {embeddings_file_path}")
 print(f"Looking for sentiment file at: {sentiment_file_path}")
 
 # Load only the required columns
 try:
-    embeddings_df = pd.read_parquet(current_file_path)
-    sentiment_df = pd.read_csv(sentiment_file_path, usecols=['performance'])
+    embeddings_df = pd.read_parquet(embeddings_file_path)
+    sentiment_df = pd.read_csv(sentiment_file_path, usecols=[LABEL_COL_NAME])
 except FileNotFoundError as e:
     print(f"Error loading file: {e}")
     print("Please ensure the 'imdb' directory exists in the same directory as the script,")
-    print("and contains the required files ('test_embeddings_parallel_v3.parquet', 'test_set_predictions.csv').")
+    print(f"and contains the required files ({EMBEDDINGS_FILE_NAME}, {SENTIMENT_FILE_NAME}).")
     exit() # Exit if files aren't found
 
 # Ensure matching lengths
 if len(embeddings_df) != len(sentiment_df):
     raise ValueError("The number of rows in embeddings and sentiment files do not match!")
 
+print(f"Original embeddings shape: {embeddings_df.shape}")
+print(f"Original sentiment shape: {sentiment_df.shape}")
+
+# Count NaN values in embeddings
+nan_count = embeddings_df[EMBEDDING_COL_NAME].isna().sum()
+print(f"Number of NaN/None embeddings: {nan_count}")
+
+if nan_count > 0:
+    # Get indices of NaN embeddings
+    nan_indices = embeddings_df[embeddings_df[EMBEDDING_COL_NAME].isna()].index.tolist()
+    print(f"NaN indices (first 10): {nan_indices[:10]}")
+    
+    # Remove NaN indices from embeddings_df
+    embeddings_df_clean = embeddings_df.dropna(subset=[EMBEDDING_COL_NAME]).reset_index(drop=True)
+    
+    # Remove the same indices from sentiment_df
+    sentiment_df_clean = sentiment_df.drop(index=nan_indices).reset_index(drop=True)
+    
+    print(f"After removing NaN - embeddings shape: {embeddings_df_clean.shape}")
+    print(f"After removing NaN - sentiment shape: {sentiment_df_clean.shape}")
+    
+    # Verify they have the same number of rows
+    if len(embeddings_df_clean) == len(sentiment_df_clean):
+        print("Both dataframes have matching row counts after cleaning")
+    else:
+        raise ValueError("Error: Dataframes have different row counts after cleaning")
+
+    
+    # Optional: Save the cleaned dataframes
+    save_cleaned = SAVE_CLEANED_DFS_ON_NAN_EMBEDDINGS
+    
+    if save_cleaned == 'y':
+        # Save cleaned embeddings
+        cleaned_embeddings_path = os.path.join(script_dir, EXPERIMENT_FOLDER, 'full_embeddings_cleaned.parquet')
+        embeddings_df_clean.to_parquet(cleaned_embeddings_path)
+        print(f"Cleaned embeddings saved to: {cleaned_embeddings_path}")
+        
+        # Save cleaned sentiment data
+        cleaned_sentiment_path = os.path.join(script_dir, EXPERIMENT_FOLDER, 'data_cleaned_from_nan_embeddings.csv')
+        sentiment_df_clean.to_csv(cleaned_sentiment_path, index=False)
+        print(f"Cleaned sentiment data saved to: {cleaned_sentiment_path}")
+    
+    # Update the original variables to point to cleaned data
+    embeddings_df = embeddings_df_clean
+    sentiment_df = sentiment_df_clean
+    
+else:
+    print("No NaN values found in embeddings column")
+
+print("\nCleaning complete!")
+print(f"Final embeddings shape: {embeddings_df.shape}")
+print(f"Final sentiment shape: {sentiment_df.shape}")
+
+# Verify no NaN values remain
+remaining_nan = embeddings_df[EMBEDDING_COL_NAME].isna().sum()
+print(f"Remaining NaN values: {remaining_nan}")
+
 # Add sentiment back to embeddings
-embeddings_df['performance'] = sentiment_df['performance']
+embeddings_df[LABEL_COL_NAME] = sentiment_df[LABEL_COL_NAME]
 
 # Expand the embedding list into separate columns
-embedding_features = pd.DataFrame(embeddings_df['embedding'].tolist(), index=embeddings_df.index)
+embedding_features = pd.DataFrame(embeddings_df[EMBEDDING_COL_NAME].tolist(), index=embeddings_df.index)
 
 # Add performance back to the expanded DataFrame
-embedding_features['performance'] = embeddings_df['performance']
+embedding_features[LABEL_COL_NAME] = embeddings_df[LABEL_COL_NAME]
 
 # Display the resulting DataFrame
 print("Initial DataFrame head:")
@@ -227,9 +291,9 @@ def run_improved_kmeans_evaluation(X, n_clusters=100):
         }
 
 # --- Prepare data ---
-X_df = embedding_features.drop('performance', axis=1)
+X_df = embedding_features.drop(LABEL_COL_NAME, axis=1)
 x = X_df.values
-y = embedding_features['performance'].values
+y = embedding_features[LABEL_COL_NAME].values
 
 # --- Check if feature importance scores already exist ---
 if os.path.exists(feature_importance_path):
@@ -276,7 +340,7 @@ sorted_indices = np.argsort(-feature_importance)  # Descending order
 
 # --- Running K-means clustering with different feature set sizes ---
 print("\n--- Running K-means clustering with different feature set sizes ---")
-k_values = [10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1536]
+k_values = [2, 5, 10, 15, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1536]
 clustering_results = []
 
 # Initialize result storage
@@ -309,7 +373,7 @@ for k in tqdm(k_values, desc="Evaluating feature sets"):
 
 # Optional: If performance values are meaningful for another analysis (not as ground truth)
 # you could analyze how performance relates to clusters discovered
-if 'performance' in embedding_features.columns:
+if LABEL_COL_NAME in embedding_features.columns:
     # For the best k (based on silhouette score)
     best_k_index = np.argmax(silhouette_scores)
     best_k = k_values[best_k_index]
@@ -319,17 +383,17 @@ if 'performance' in embedding_features.columns:
         # Create a dataframe with cluster assignments and performance
         cluster_analysis = pd.DataFrame({
             'cluster': best_clustering['cluster_labels'],
-            'performance': embedding_features['performance'].values
+            LABEL_COL_NAME: embedding_features[LABEL_COL_NAME].values
         })
         
         # Analyze relationship between clusters and performance
-        cluster_performance = cluster_analysis.groupby('cluster')['performance'].agg(['mean', 'std', 'count'])
+        cluster_performance = cluster_analysis.groupby('cluster')[LABEL_COL_NAME].agg(['mean', 'std', 'count'])
         print("\n--- Performance across clusters (using feature set size k =", best_k, ") ---")
         print(cluster_performance.sort_values('count', ascending=False).head(10))
         
         # Optional plot of cluster vs performance distribution
         plt.figure(figsize=(12, 6))
-        sns.boxplot(x='cluster', y='performance', data=cluster_analysis.loc[cluster_analysis['cluster'].isin(range(20))])
+        sns.boxplot(x='cluster', y=LABEL_COL_NAME, data=cluster_analysis.loc[cluster_analysis['cluster'].isin(range(20))])
         plt.title(f'Performance Distribution by Cluster (Top 20 clusters, k={best_k})')
         plt.xticks(rotation=90)
         plt.tight_layout()
