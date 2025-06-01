@@ -123,7 +123,7 @@ def _check_and_create_folder(folder_path):
     #             print("Invalid response. Please reply with 'Y' or 'N'.")
 
 
-def main(openai_api_key, data_path, text_col_name, target_col_name):
+def main(openai_api_key, data_path, text_col_name, target_col_name, folder_name, start_step):
     # Runs only on scipy==1.12 because of gensim requirement of deprecated function
     print(f'cuda.is_available: {torch.cuda.is_available()}')
     print(f'torch.cuda.device_count(): {torch.cuda.device_count()}')
@@ -139,7 +139,7 @@ def main(openai_api_key, data_path, text_col_name, target_col_name):
     print("DEBUG: main - Textblob corpora ensured. This is AFTER 'Finished.' from textblob.") # Key marker
     
     print("DEBUG: main - Defining folder paths...")
-    clusters_files_loc = os.path.join('imdb', 'clusters')
+    clusters_files_loc = os.path.join(folder_name, 'clusters')
     print(f"DEBUG: main - clusters_files_loc = {clusters_files_loc}")
     xgboost_files_loc = os.path.join(clusters_files_loc, 'xgboost_files')
     print(f"DEBUG: main - xgboost_files_loc = {xgboost_files_loc}")
@@ -168,7 +168,7 @@ def main(openai_api_key, data_path, text_col_name, target_col_name):
     
     print("DEBUG: main - Initializing start_whole and start_step...")
     start_whole = time.time()
-    start_step = 4 # Current hardcoded value
+    #start_step = 6 # Current hardcoded value
     print(f"DEBUG: main - start_step = {start_step}")
     
     # Step 1: Feature extraction
@@ -262,7 +262,12 @@ def main(openai_api_key, data_path, text_col_name, target_col_name):
 
 if __name__ == '__main__':
     api_key = os.getenv('OPENAI_KEY')
-    main(api_key, data_path='imdb/experiment_ready_data.csv', text_col_name='review', target_col_name='performance')
+    
+    #main(api_key, data_path='Twitter_covid/preproccessed_finalSentimentdata2_with_clusters.csv',
+    #     text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid', start_step = 6)
+    
+    main(api_key, data_path='imdb/data_cleaned_from_nan_embeddings_with_clusters.csv',
+          text_col_name='review', target_col_name='label', folder_name='imdb', start_step = 5)
 
     # df = pd.read_csv('twitter sentiment/raw/twitter_training.csv')
     # print(f'len before processing: {len(df)}')

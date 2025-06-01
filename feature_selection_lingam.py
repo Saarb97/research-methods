@@ -16,9 +16,9 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # Build absolute paths to the data files and CONSTANTS -----------------------------------------------------------
 SAVE_CLEANED_DFS_ON_NAN_EMBEDDINGS = 'y'
 EMBEDDING_COL_NAME = 'embedding'
-LABEL_COL_NAME = 'sentiment'
-EXPERIMENT_FOLDER = 'Twitter_covid '
-SENTIMENT_FILE_NAME = 'preproccessed_finalSentimentdata2.csv'
+LABEL_COL_NAME = 'label'
+EXPERIMENT_FOLDER = 'imdb'
+SENTIMENT_FILE_NAME = 'preprocessed_imdb.csv'
 EMBEDDINGS_FILE_NAME = 'full_embeddings.parquet'
 sentiment_file_path = os.path.join(script_dir, EXPERIMENT_FOLDER, SENTIMENT_FILE_NAME)
 embeddings_file_path = os.path.join(script_dir, EXPERIMENT_FOLDER, EMBEDDINGS_FILE_NAME)
@@ -35,7 +35,8 @@ print(f"Looking for sentiment file at: {sentiment_file_path}")
 # Load only the required columns
 try:
     embeddings_df = pd.read_parquet(embeddings_file_path)
-    sentiment_df = pd.read_csv(sentiment_file_path, usecols=[LABEL_COL_NAME])
+    # sentiment_df = pd.read_csv(sentiment_file_path, usecols=[LABEL_COL_NAME])
+    sentiment_df = pd.read_csv(sentiment_file_path)
 except FileNotFoundError as e:
     print(f"Error loading file: {e}")
     print("Please ensure the 'imdb' directory exists in the same directory as the script,")
@@ -115,6 +116,9 @@ embedding_features[LABEL_COL_NAME] = embeddings_df[LABEL_COL_NAME]
 # Display the resulting DataFrame
 print("Initial DataFrame head:")
 print(embedding_features.head())
+
+# Loading sentiment_df with only the needed column
+sentiment_df = pd.read_csv(cleaned_sentiment_path, usecols=[LABEL_COL_NAME])
 
 def causal_fs(x, y):
     """
@@ -236,7 +240,7 @@ def causal_fs(x, y):
 
     return final_selected_indices, final_importance_scores, df.drop('target', axis=1)
 
-def run_improved_kmeans_evaluation(X, n_clusters=100):
+def run_improved_kmeans_evaluation(X, n_clusters=50):
     """
     Run k-means clustering and evaluate using internal validation metrics only
     (metrics that don't require ground truth labels)
@@ -349,14 +353,17 @@ calinski_harabasz_scores = []
 davies_bouldin_scores = []
 inertia_values = []
 
+# ------------------ n_clusters ------------------------
+n_clusters = 50
+# ------------------------------------------------------
+
+
 for k in tqdm(k_values, desc="Evaluating feature sets"):
     # Select top k features
     top_k_indices = sorted_indices[:k]
     X_selected = x[:, top_k_indices]
     
     print(f"\nEvaluating with top {k} features:")
-    # Use 100 clusters as specified
-    n_clusters = 100
     results = run_improved_kmeans_evaluation(X_selected, n_clusters=n_clusters)
     
     # Store results

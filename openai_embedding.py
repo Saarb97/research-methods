@@ -188,7 +188,7 @@ def process_dataframe_with_embeddings_v2(df: pd.DataFrame, text_column_name: str
 
     return embeddings_df
 
-file_path = 'Twitter_covid /preproccessed_finalSentimentdata2.csv' 
+file_path = 'Twitter_covid/preproccessed_finalSentimentdata2.csv' 
 try:
     df = pd.read_csv(file_path)
 
