@@ -1,23 +1,28 @@
-"""
-Multiclass-ready re-write of the original XGBoost + SMOTE-Tomek pipeline.
-"""
 # ───────────────────────────────── Imports ────────────────────────────────────
 import os, time
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt       # noqa – kept for backwards-compat
 
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
     classification_report, accuracy_score
 )
-
+from sklearn.metrics import (
+    confusion_matrix,
+    multilabel_confusion_matrix,
+    balanced_accuracy_score,
+    matthews_corrcoef,
+    precision_recall_fscore_support
+)
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 from imblearn.over_sampling import SMOTE
 from imblearn.combine import SMOTETomek
 from imblearn.under_sampling import TomekLinks
 
 import optuna, xgboost as xgb, torch
+from pathlib import Path
+import joblib
 
 
 # ─────────────────────────── Global configuration ────────────────────────────
@@ -61,7 +66,7 @@ def build_xgb_params(trial, n_classes: int) -> dict:
     else:
         base.update(objective="multi:softprob",
                     num_class=n_classes,
-                    eval_metric="mlogloss")   # or "auc" if XGB≥1.7
+                    eval_metric="auc")   # or "auc" if XGB≥1.7
     return base
 
 
@@ -185,15 +190,18 @@ def train_xgboost_with_SMOTE(X_train_fold, y_train_fold):
         early_stopping_rounds=EARLY_STOPPING_PATIENCE,
     )
     final_model.fit(X_tr_res, y_tr_res, eval_set=[(X_val, y_val)], verbose=False)
+    
+        
     return final_model
 
 
 # ─────────────────────────────── K-fold loop ─────────────────────────────────
-def train_with_smote_kfold(X, y, cluster_idx):
+def train_with_smote_kfold(X, y, cluster_idx, models_dir=None):
     kf = StratifiedKFold(n_splits=N_CV_SPLITS, shuffle=True, random_state=RANDOM_STATE)
 
     accs, roc_aucs, pr_aucs, f1s, feats, reports = [], [], [], [], [], []
-
+    fold_pred_dfs = []
+    
     for fold, (tr_idx, te_idx) in enumerate(kf.split(X, y), start=1):
         X_tr, X_te = X.iloc[tr_idx], X.iloc[te_idx]
         y_tr, y_te = y.iloc[tr_idx], y.iloc[te_idx]
@@ -203,29 +211,61 @@ def train_with_smote_kfold(X, y, cluster_idx):
             accs.append(np.nan); roc_aucs.append(np.nan); pr_aucs.append(np.nan); f1s.append(np.nan)
             feats.append(np.full(X.shape[1], np.nan)); reports.append({})
             continue
-
+        
+        # Save the first model
+        if fold == 0:
+          if models_dir is not None:
+            fname = models_dir / f"cluster{cluster_idx}_fold{fold}.pkl"
+            joblib.dump({"model": final_model,          # saves the estimator
+                         "features": list(X_tr.columns)}, fname)
+        
+        # ---------- predictions ----------
         y_pred  = model.predict(X_te)
         y_proba = model.predict_proba(X_te)
 
+        # ---- guarantee a 2-column matrix in the binary case ----
+        if y_proba.ndim == 1:   # some builds return shape (n,)
+            y_proba = np.vstack([1 - y_proba, y_proba]).T
+        
+        prob_cols = [f"p_{c}" for c in range(y_proba.shape[1])]
+        
+        # ---- build BOTH frames on the SAME index, then concat ----
+        df_meta  = pd.DataFrame(
+            {
+                "row_id": X_te.index,        # keeps global row id
+                "true"  : y_te.values,
+                "pred"  : y_pred,
+                "cluster": cluster_idx
+            },
+            index=X_te.index                # identical index
+        )
+        df_proba = pd.DataFrame(y_proba, columns=prob_cols, index=X_te.index)
+        fold_pred_dfs.append(pd.concat([df_meta, df_proba], axis=1))
+
+        # ---------- metrics ----------
         accs.append(accuracy_score(y_te, y_pred))
         roc_aucs.append(roc_auc_multiclass(y_te.values, y_proba))
         pr_aucs.append(pr_auc_multiclass(y_te.values, y_proba))
-        f1s.append(classification_report(y_te, y_pred, output_dict=True)["weighted avg"]["f1-score"])
+        f1s.append(classification_report(y_te, y_pred,
+                                         output_dict=True, zero_division=0)["weighted avg"]["f1-score"])
         feats.append(model.feature_importances_)
-        reports.append(classification_report(y_te, y_pred, output_dict=True))
+        reports.append(classification_report(y_te, y_pred, output_dict=True, zero_division=0))
 
     return (
         np.nanmean(accs), np.nanmean(roc_aucs), np.nanmean(pr_aucs),
-        np.nanmean(f1s), reports, np.nanmean(feats, axis=0)
+        np.nanmean(f1s), reports, np.nanmean(feats, axis=0),
+        pd.concat(fold_pred_dfs, ignore_index=True) 
     )
-
 
 # ──────────────────────────── Driver function ────────────────────────────────
 def main_kfold(data_files_loc, num_of_clusters, output_loc,
                text_col_name, target_col_name):
 
     os.makedirs(output_loc, exist_ok=True)
-    summary, all_importances = [], []
+    models_root = Path(output_loc) / "models"
+    models_root.mkdir(parents=True, exist_ok=True)
+
+    summary, all_importances, all_preds = [], [], []
 
     MIN_SAMPLES_PER_CLASS = max(N_CV_SPLITS,
                                 int(np.ceil(1 / (VALIDATION_SPLIT_SIZE *
@@ -247,7 +287,7 @@ def main_kfold(data_files_loc, num_of_clusters, output_loc,
             print("Too few samples per class – skipping.")
             continue
 
-        acc, auc, pr, f1, reports, fi = train_with_smote_kfold(X, y, c)
+        acc, auc, pr, f1, reports, fi, preds_df = train_with_smote_kfold(X, y, c, models_dir=models_root)
         summary.append({
             "cluster": c,
             "accuracy": acc,
@@ -256,10 +296,141 @@ def main_kfold(data_files_loc, num_of_clusters, output_loc,
             "weighted_f1": f1,
         })
         all_importances.append({"cluster": c, **dict(zip(X.columns, fi))})
+        all_preds.append(preds_df)
 
+    # ---------- per-cluster CSVs ----------
     pd.DataFrame(summary).to_csv(os.path.join(output_loc, "summary.csv"), index=False)
     pd.DataFrame(all_importances).to_csv(os.path.join(output_loc, "feature_importances.csv"), index=False)
-    print("\nSaved results →", output_loc)
+
+    # ---------- GLOBAL METRICS ----------
+    if all_preds:  # protect against empty list
+        # ---------------------------------------------------------------------------
+        # 1.  Basic vectors
+        # ---------------------------------------------------------------------------
+        global_preds = (
+            pd.concat(all_preds, ignore_index=True)
+              .sort_values("row_id")
+        )
+        y_true = global_preds["true"].values
+        y_hat  = global_preds["pred"].values
+        labels = np.unique(np.concatenate([y_true, y_hat]))   # all classes seen
+        
+        # ---------------------------------------------------------------------------
+        # 2.  Accuracy & weighted-F1 (same for binary / multiclass)
+        # ---------------------------------------------------------------------------
+        acc_glob = accuracy_score(y_true, y_hat)
+        f1_glob  = classification_report(
+            y_true, y_hat, output_dict=True, zero_division=0
+        )["weighted avg"]["f1-score"]
+        
+        # ---------------------------------------------------------------------------
+        # 3.  Probability-based metrics (macro ROC-AUC & PR-AUC)
+        #     – only if you stored predict_proba columns named “p_<class>”
+        # ---------------------------------------------------------------------------
+        prob_cols = [c for c in global_preds.columns if c.startswith("p_")]
+        if prob_cols:                                # might be missing if you skipped proba
+            proba_full = global_preds[prob_cols].values
+        
+            if proba_full.shape[1] == 2:             # binary
+                auc_glob = roc_auc_score(y_true, proba_full[:, 1])
+                pr_glob  = average_precision_score(y_true, proba_full[:, 1])
+            else:                                    # multiclass
+                auc_glob = roc_auc_score(
+                    y_true, proba_full, multi_class="ovr", average="macro"
+                )
+                pr_glob  = average_precision_score(
+                    y_true, proba_full, average="macro"
+                )
+        else:
+            auc_glob = np.nan
+            pr_glob  = np.nan
+        
+        # ---------------------------------------------------------------------------
+        # 4.  Micro-averaged confusion-matrix counts
+        # ---------------------------------------------------------------------------
+        if len(labels) == 2:                         # binary → 2×2 matrix
+            tn, fp, fn, tp = confusion_matrix(y_true, y_hat, labels=labels).ravel()
+        else:                                        # multiclass → stack one-vs-rest 2×2 matrices
+            mcm = multilabel_confusion_matrix(y_true, y_hat, labels=labels)
+            tn = mcm[:, 0, 0].sum()
+            fp = mcm[:, 0, 1].sum()
+            fn = mcm[:, 1, 0].sum()
+            tp = mcm[:, 1, 1].sum()
+        
+        # ---------------------------------------------------------------------------
+        # 5.  Micro metrics (identical formulas for binary & multiclass)
+        # ---------------------------------------------------------------------------
+        precision     = tp / (tp + fp) if tp + fp else 0.0          # PPV
+        recall        = tp / (tp + fn) if tp + fn else 0.0          # TPR
+        specificity   = tn / (tn + fp) if tn + fp else 0.0          # TNR
+        fpr           = fp / (fp + tn) if fp + tn else 0.0
+        fnr           = fn / (fn + tp) if fn + tp else 0.0
+        fdr           = fp / (fp + tp) if fp + tp else 0.0
+        npv           = tn / (tn + fn) if tn + fn else 0.0
+        
+        bal_acc = balanced_accuracy_score(y_true, y_hat)
+        mcc     = matthews_corrcoef(y_true, y_hat)
+        
+        # ---------------------------------------------------------------------------
+        # 6.  Optional macro / weighted averages (often helpful for class imbalance)
+        # ---------------------------------------------------------------------------
+        prec_macro, rec_macro, f1_macro, _ = precision_recall_fscore_support(
+            y_true, y_hat, average="macro", zero_division=0
+        )
+        prec_weighted, rec_weighted, f1_weighted, _ = precision_recall_fscore_support(
+            y_true, y_hat, average="weighted", zero_division=0
+        )
+        
+        # ---------------------------------------------------------------------------
+        # 7.  Dump everything to a TXT file
+        # ---------------------------------------------------------------------------
+        os.makedirs(output_loc, exist_ok=True)
+        metrics_txt = os.path.join(output_loc, "global_metrics.txt")
+        
+        with open(metrics_txt, "w") as fout:
+            fout.write("=== Whole-dataset (out-of-fold) metrics ===\n")
+            fout.write(f"Samples                : {len(y_true)}\n\n")
+        
+            fout.write(f"True Positives  (TP)   : {tp}\n")
+            fout.write(f"False Positives (FP)   : {fp}\n")
+            fout.write(f"True Negatives  (TN)   : {tn}\n")
+            fout.write(f"False Negatives (FN)   : {fn}\n\n")
+        
+            fout.write(f"Accuracy               : {acc_glob:.4f}\n")
+            fout.write(f"Weighted F1            : {f1_glob:.4f}\n")
+            fout.write(f"Micro Precision (PPV)  : {precision:.4f}\n")
+            fout.write(f"Micro Recall           : {recall:.4f}\n")
+            fout.write(f"Specificity (TNR)      : {specificity:.4f}\n")
+            fout.write(f"False-Positive Rate    : {fpr:.4f}\n")
+            fout.write(f"False-Negative Rate    : {fnr:.4f}\n")
+            fout.write(f"False Discovery Rate   : {fdr:.4f}\n")
+            fout.write(f"Negative Predictive Val: {npv:.4f}\n")
+            fout.write(f"Balanced Accuracy      : {bal_acc:.4f}\n")
+            fout.write(f"Matthews Corr. Coef.   : {mcc:.4f}\n\n")
+        
+            fout.write("--- Macro averages ---\n")
+            fout.write(f"Macro Precision        : {prec_macro:.4f}\n")
+            fout.write(f"Macro Recall           : {rec_macro:.4f}\n")
+            fout.write(f"Macro F1               : {f1_macro:.4f}\n\n")
+        
+            fout.write("--- Weighted averages ---\n")
+            fout.write(f"Weighted Precision     : {prec_weighted:.4f}\n")
+            fout.write(f"Weighted Recall        : {rec_weighted:.4f}\n")
+            fout.write(f"Weighted F1            : {f1_weighted:.4f}\n\n")
+        
+            fout.write(f"Macro ROC-AUC          : {auc_glob:.4f}\n")
+            fout.write(f"Macro PR-AUC           : {pr_glob:.4f}\n")
+        
+        # quick console preview
+        print(open(metrics_txt).read())
+
+        # ---------------------------------------------------------------------------
+        # 8. save raw OOF predictions for later analysis
+        # ---------------------------------------------------------------------------
+        global_preds.to_csv(os.path.join(output_loc, "oof_predictions.csv"), index=False)
+        
+        print("Saved results →", output_loc)
+
 
 
 # ─────────────────────────────── Example usage ───────────────────────────────

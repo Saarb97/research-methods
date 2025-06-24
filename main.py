@@ -262,12 +262,33 @@ def main(openai_api_key, data_path, text_col_name, target_col_name, folder_name,
 
 if __name__ == '__main__':
     api_key = os.getenv('OPENAI_KEY')
+
+    # main(api_key, data_path='Twitter_covid_one/preproccessed_finalSentimentdata2_with_clusters.csv',
+        # text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid_one', start_step = 6)
+
+    # main(api_key, data_path='Twitter_covid_one_no_nlp/preproccessed_finalSentimentdata2_with_clusters.csv',
+     # text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid_one_no_nlp', start_step = 6)
+
+    main(api_key, data_path='Twitter_covid_one_no_llm/preproccessed_finalSentimentdata2_with_clusters.csv',
+        text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid_one_no_llm', start_step = 6)
     
     #main(api_key, data_path='Twitter_covid/preproccessed_finalSentimentdata2_with_clusters.csv',
-    #     text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid', start_step = 6)
+        # text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid', start_step = 6)
+        
+    #main(api_key, data_path='Twitter_covid_no_nlp/preproccessed_finalSentimentdata2_with_clusters.csv',
+    #  text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid_no_nlp', start_step = 6)
     
-    main(api_key, data_path='imdb/data_cleaned_from_nan_embeddings_with_clusters.csv',
-          text_col_name='review', target_col_name='label', folder_name='imdb', start_step = 5)
+    #main(api_key, data_path='Twitter_covid_no_llm/preproccessed_finalSentimentdata2_with_clusters.csv',
+      #text_col_name='text', target_col_name='sentiment', folder_name='Twitter_covid_no_llm', start_step = 6)
+    
+    #main(api_key, data_path='imdb/data_cleaned_from_nan_embeddings_with_clusters.csv',
+    #     text_col_name='review', target_col_name='label', folder_name='imdb', start_step = 6)
+     
+    #main(api_key, data_path='imdb_no_nlp/data_cleaned_from_nan_embeddings_with_clusters.csv',
+    #      text_col_name='review', target_col_name='label', folder_name='imdb_no_nlp', start_step = 6)
+          
+    #main(api_key, data_path='imdb_no_llm/data_cleaned_from_nan_embeddings_with_clusters.csv',
+    #  text_col_name='review', target_col_name='label', folder_name='imdb_no_llm', start_step = 6)
 
     # df = pd.read_csv('twitter sentiment/raw/twitter_training.csv')
     # print(f'len before processing: {len(df)}')
